@@ -2,15 +2,10 @@
 
 /**
  * @todo
- * - create smooth mouse enter
  * - back to original position when mouse leave
+ * - cancel requestAnimationFrame
  */
-var raf = window.requestAnimationFrame ||
-    window.webkitRequestAnimationFrame ||
-    window.mozRequestAnimationFrame ||
-    window.msRequestAnimationFrame ||
-    window.oRequestAnimationFrame ||
-    function (cb) { setTimeout(cb, 1000 / 60) }
+var raf = null
 
 function assign(target) {
   var args = Array.prototype.slice.call(arguments)
@@ -30,7 +25,7 @@ var wrapper = function (div) {
   div.style.display = 'inline-block'
 
   function addAdditionalStyle (opts) {
-    div.style.marginTop = opts.spaceBetweenFrame + 'px'
+    div.style.paddingTop = opts.spaceBetweenFrame + 'px'
     return div
   }
 
@@ -46,7 +41,7 @@ var border = function (div) {
   div.style.zIndex = '1'
 
   function addAdditionalStyle (opts) {
-    div.style.top = '-' + (opts.spaceBetweenFrame + 'px')
+    div.style.top = 0
     div.style.bottom = opts.spaceBetweenFrame + 'px'
     div.style.borderWidth = opts.densityFrame + 'px'
     div.style.borderColor = opts.colorFrame
@@ -59,15 +54,17 @@ var border = function (div) {
 
 function FrameParallax (el, opts) {
   this.$el = el
-  this.tick = false
   this.getOptions(opts)
+  this.addElement()
   this.init()
-  this.bind()
+  this.animate()
 }
 
 FrameParallax.prototype.getOptions = function (opts) {
   var baseOpts = {
-    parallaxTranslation: 20,
+    speedBorder: 22,
+    speedImage: 25,
+    threshold: 25,
     spaceBetweenFrame: 25,
     densityFrame: 2,
     colorFrame: '#000'
@@ -76,7 +73,7 @@ FrameParallax.prototype.getOptions = function (opts) {
   return this
 }
 
-FrameParallax.prototype.init = function () {
+FrameParallax.prototype.addElement = function () {
   this.$wrapper = wrapper(this.opts)
   this.$border = border(this.opts)
 
@@ -84,32 +81,89 @@ FrameParallax.prototype.init = function () {
   this.$el.parentNode.replaceChild(this.$wrapper, this.$el)
   this.$wrapper.appendChild(this.$border) // Set sibling
   this.$wrapper.appendChild(this.$el)
+
   return this
 }
 
-FrameParallax.prototype.mouseMove = function (ev) {
-  if (this.tick) {
+FrameParallax.prototype.init = function () {
+  this.dim = {
+    w: this.$wrapper.offsetWidth,
+    h: this.$wrapper.offsetHeight
+  }
+
+  var rect = this.$wrapper.getBoundingClientRect()
+  this.rect = {
+    top: rect.top,
+    left: rect.left
+  }
+
+  this.running = false
+
+  this.$wrapper.addEventListener('mouseenter', this.onMouseEnter.bind(this))
+  this.$wrapper.addEventListener('mouseleave', this.onMouseLeave.bind(this))
+  return this
+}
+
+FrameParallax.prototype.onMouseEnter = function (ev) {
+  this.$wrapper.addEventListener('mousemove', this.move.bind(this))
+
+  this.posx = 0
+  this.posy = 0
+  this.endx = 0
+  this.endy = 0
+
+  this.elX = 0
+  this.elY = 0
+  this.borderX = 0
+  this.borderY = 0
+
+  this.torender = true
+  this.move(ev)
+}
+
+FrameParallax.prototype.onMouseLeave = function (ev) {
+  this.$wrapper.removeEventListener('mousemove', this.move.bind(this))
+  this.torender = false
+}
+
+FrameParallax.prototype.move = function (ev) {
+  this.posx = ((ev.clientX - this.rect.left) / this.dim.w - .5) * 2
+  this.posy = ((ev.clientY - this.rect.top) / this.dim.h - .5) * 2
+  return this
+}
+
+FrameParallax.prototype.animate = function () {
+  if (this.running) {
     return this
   }
-  this.tick = true
-  raf(function () {
-    this.update(ev)
-  }.bind(this))
+  this.running = true
+  raf = requestAnimationFrame(this.render.bind(this))
   return this
 }
 
-FrameParallax.prototype.update = function (ev) {
-  var pt = this.opts.parallaxTranslation
-  var transX = ((pt / this.$el.offsetWidth) * ev.clientX) - (pt / 2)
-  var transY = ((pt / this.$el.offsetHeight) * ev.clientY) - (pt / 2)
+// posx & posy from -1 to 1
+FrameParallax.prototype.render = function () {
+  if (this.torender) {
+    // Until threshold
+    this.endx = (this.posx * this.opts.threshold)
+    this.endy = (this.posy * this.opts.threshold)
 
-  this.$el.style.transform = 'translate(' + transX + 'px, ' + transY + 'px)'
-  this.$border.style.transform = 'translate(' + (transX * -1) + 'px, ' + (transY * -1) + 'px)'
-  this.tick = false
-  return this
-}
+    // Add documentation for this
+    // 25 - 0 / 25 = 1
+    // 1 + 25 -1 / 25 = 1.9
+    // 1.9 + 25 - 1.9 / 25 = 1.8
+    this.elX += (this.endx - this.elX) / this.opts.speedImage
+    this.elY += (this.endy - this.elY) / this.opts.speedImage
+    this.borderX += (this.endx - this.borderX) / this.opts.speedBorder
+    this.borderY += (this.endy - this.borderY) / this.opts.speedBorder
 
-FrameParallax.prototype.bind = function () {
-  this.$wrapper.addEventListener('mousemove', this.mouseMove.bind(this))
-  return this
+    // Use translate3d instead translate2d
+    // because gfx hardware acceleration to speed up rendering
+    // more on http://blog.teamtreehouse.com/increase-your-sites-performance-with-hardware-accelerated-css
+    this.$el.style.transform = 'translate3d(' + (-this.elX) + 'px, ' + (-this.elY) + 'px, 0)'
+    this.$border.style.transform = 'translate3d(' + this.borderX + 'px, ' + this.borderY + 'px, 0)'
+  }
+  if (this.running) {
+    raf = requestAnimationFrame(this.render.bind(this))
+  }
 }
